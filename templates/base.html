@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Audit Dashboard{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/audit_dashboard.css">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="bg-slate-50 min-h-screen">
+    {% block body %}{% endblock %}
+    <script src="/static/js/audit_dashboard.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

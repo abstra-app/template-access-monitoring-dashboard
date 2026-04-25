@@ -1,0 +1,48 @@
+{
+  "components": [],
+  "forms": [],
+  "home": {
+    "access_control": {
+      "is_public": false,
+      "required_roles": []
+    }
+  },
+  "hooks": [],
+  "jobs": [],
+  "pages": [
+    {
+      "access_control": {
+        "is_public": false,
+        "required_roles": []
+      },
+      "enabled": false,
+      "file": "page_audit_dashboard.py",
+      "id": "audit-dashboard-page",
+      "input": false,
+      "is_initial": true,
+      "output": false,
+      "path": "page-audit-dashboard",
+      "task_schema": null,
+      "title": "Audit Dashboard - Authors Activity",
+      "transitions": [],
+      "type": "page",
+      "workflow_position": [
+        -150,
+        -30
+      ]
+    }
+  ],
+  "scripts": [],
+  "version": "18.0",
+  "workspace": {
+    "brand_name": "Abstra Project",
+    "favicon_url": "./favicon.ico",
+    "font_color": null,
+    "font_family": null,
+    "language": "en",
+    "logo_url": "./logo.png",
+    "main_color": null,
+    "name": "Workspace",
+    "theme": null
+  }
+}

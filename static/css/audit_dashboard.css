@@ -1,0 +1,74 @@
+/* Custom styles for Audit Dashboard */
+
+/* Smooth transitions for table rows */
+#authors-table-body tr {
+    transition: background-color 0.15s ease;
+}
+
+#authors-table-body tr:hover {
+    background-color: #f8fafc;
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.status-active {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.status-inactive {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+/* Days inactive coloring */
+.days-recent {
+    color: #059669;
+    font-weight: 600;
+}
+
+.days-warning {
+    color: #d97706;
+    font-weight: 600;
+}
+
+.days-danger {
+    color: #dc2626;
+    font-weight: 600;
+}
+
+/* Code styling */
+code {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.875rem;
+}
+
+/* Table cell truncation */
+.truncate-cell {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Loading animation enhancement */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.loading-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
