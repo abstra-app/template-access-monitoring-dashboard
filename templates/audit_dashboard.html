@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audit - Authors Activity</title>
+    <title>Audit Dashboard - Atividade de Usuários</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Custom styles for Audit Dashboard */
@@ -15,12 +15,43 @@
             font-size: 0.75rem; font-weight: 600;
         }
         .status-active { background-color: #d1fae5; color: #065f46; }
-        .status-inactive { background-color: #fee2e2; color: #991b1b; }
+        .status-inactive { background-color: #fef3c7; color: #92400e; }
+        .status-never { background-color: #fee2e2; color: #991b1b; }
         .days-recent { color: #059669; font-weight: 600; }
         .days-warning { color: #d97706; font-weight: 600; }
         .days-danger { color: #dc2626; font-weight: 600; }
         code { font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 0.875rem; }
         .truncate-cell { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        
+        /* Metric badges */
+        .metric-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 1.5rem; height: 1.5rem;
+            padding: 0 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem; font-weight: 600;
+        }
+        .metric-projects { background-color: #dbeafe; color: #1e40af; }
+        .metric-builds { background-color: #e0e7ff; color: #3730a3; }
+        .metric-editor { background-color: #fce7f3; color: #be185d; }
+        
+        /* Expandable row details */
+        .details-row {
+            background-color: #f8fafc;
+            border-left: 3px solid #6366f1;
+        }
+        .details-row td {
+            padding: 1rem 1.5rem;
+        }
+        
+        /* Loading animation */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .loading-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
     </style>
 </head>
 <body class="bg-slate-50 min-h-screen">
@@ -30,10 +61,13 @@
             <div class="flex items-center gap-3">
                 <span class="text-2xl">📊</span>
                 <h1 class="text-xl font-bold text-slate-800">Audit Dashboard</h1>
+                <span class="text-sm text-slate-500">- Monitoramento de Atividade</span>
             </div>
             <div class="flex items-center gap-4">
-                <button onclick="refreshData()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                    🔄 Atualizar
+                <span id="last-updated" class="text-sm text-slate-500"></span>
+                <button id="refresh-button" onclick="refreshData(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2" title="Busca apenas as entradas novas (não invalida o cache)">
+                    <span id="refresh-icon">🔄</span>
+                    <span>Atualizar</span>
                 </button>
             </div>
         </div>
@@ -42,22 +76,34 @@
     <!-- Main Content -->
     <main class="max-w-7xl mx-auto p-6">
         <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Authors</p>
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total de Usuários</p>
                 <p class="text-3xl font-bold text-slate-800 mt-1" id="stat-total">-</p>
             </div>
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-                <p class="text-xs font-semibold text-emerald-500 uppercase tracking-wide">Ativos (30d)</p>
+                <p class="text-xs font-semibold text-emerald-500 uppercase tracking-wide">Ativos no período</p>
                 <p class="text-3xl font-bold text-emerald-600 mt-1" id="stat-active">-</p>
+                <p class="text-xs text-slate-500 mt-1">Com login ou ação no período</p>
             </div>
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-                <p class="text-xs font-semibold text-rose-500 uppercase tracking-wide">Inativos (30d)</p>
-                <p class="text-3xl font-bold text-rose-600 mt-1" id="stat-inactive">-</p>
+                <p class="text-xs font-semibold text-amber-500 uppercase tracking-wide">Inativos no período</p>
+                <p class="text-3xl font-bold text-amber-600 mt-1" id="stat-inactive">-</p>
+                <p class="text-xs text-slate-500 mt-1">Sem atividade no período</p>
+            </div>
+        </div>
+
+        <!-- Activity Metrics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                <p class="text-xs font-semibold text-blue-500 uppercase tracking-wide">Projetos Criados</p>
+                <p class="text-2xl font-bold text-blue-700 mt-1" id="stat-projects">-</p>
+                <p class="text-xs text-slate-500 mt-2">No período selecionado</p>
             </div>
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-                <p class="text-xs font-semibold text-amber-500 uppercase tracking-wide">Never Logged In</p>
-                <p class="text-3xl font-bold text-amber-600 mt-1" id="stat-never">-</p>
+                <p class="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Total de ações</p>
+                <p class="text-2xl font-bold text-indigo-700 mt-1" id="stat-actions">-</p>
+                <p class="text-xs text-slate-500 mt-2">No período selecionado</p>
             </div>
         </div>
 
@@ -65,27 +111,37 @@
         <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200 mb-6">
             <div class="flex flex-wrap items-center gap-4">
                 <div class="flex-1 min-w-[200px]">
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Buscar Author</label>
-                    <input type="text" id="search-input" placeholder="Email ou ID..."
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Buscar Usuário</label>
+                    <input type="text" id="search-input" placeholder="Email ou nome..."
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                         oninput="filterTable()">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">De</label>
+                    <input type="date" id="from-date" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="changePeriod()">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Até</label>
+                    <input type="date" id="to-date" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="changePeriod()">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
                     <select id="status-filter" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="filterTable()">
                         <option value="all">Todos</option>
-                        <option value="active">Ativos (30d)</option>
-                        <option value="inactive">Inativos (30d)</option>
-                        <option value="never">Never Logged In</option>
+                        <option value="ACTIVE">Ativos no período</option>
+                        <option value="INACTIVE">Inativos no período</option>
                     </select>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">Ordenar por</label>
                     <select id="sort-by" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="sortTable()">
-                        <option value="last_activity_desc">Última Atividade (recente)</option>
-                        <option value="last_activity_asc">Última Atividade (antiga)</option>
-                        <option value="events_desc">Total de Logins (maior)</option>
-                        <option value="events_asc">Total de Logins (menor)</option>
+                        <option value="status">Status (Ativos primeiro)</option>
+                        <option value="last_activity_desc">Última atividade (recente)</option>
+                        <option value="last_activity_asc">Última atividade (antiga)</option>
+                        <option value="logins_desc">Logins (maior)</option>
+                        <option value="logins_asc">Logins (menor)</option>
+                        <option value="projects_desc">Projetos criados (maior)</option>
+                        <option value="actions_desc">Total de ações (maior)</option>
                     </select>
                 </div>
             </div>
@@ -94,8 +150,8 @@
         <!-- Table -->
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-slate-800">Authors and Ultimo Login</h2>
-                <button onclick="exportCSV()" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                <h2 class="text-lg font-semibold text-slate-800">Usuários e Atividade</h2>
+                <button onclick="exportCSV()" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1">
                     📥 Exportar CSV
                 </button>
             </div>
@@ -103,17 +159,19 @@
                 <table class="w-full">
                     <thead class="bg-slate-50">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Author ID</th>
-                            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Email</th>
-                            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Última Atividade</th>
-                            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Dias Inativo</th>
-                            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Total de Logins</th>
-                            <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Usuário</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Último login</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Última atividade</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Dias inativo</th>
+                            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide" title="Projetos criados no período">Projetos Criados</th>
+                            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Ações</th>
+                            <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Logins</th>
                         </tr>
                     </thead>
                     <tbody id="authors-table-body" class="divide-y divide-slate-200">
                         <tr>
-                            <td colspan="6" class="px-6 py-8 text-center text-slate-500">
+                            <td colspan="8" class="px-6 py-8 text-center text-slate-500">
                                 <div class="flex items-center justify-center gap-2">
                                     <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -141,10 +199,15 @@
         // Global state
         let allData = [];
         let filteredData = [];
-        const INACTIVE_THRESHOLD_DAYS = 30;
+        let currentStats = {};
+        const MAX_WINDOW_DAYS = 31;
 
-        // Initialize on page load
+        // Initialize on page load — default window is the last 30 days.
         document.addEventListener('DOMContentLoaded', () => {
+            const now = new Date();
+            const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            document.getElementById('from-date').value = past.toISOString().slice(0, 10);
+            document.getElementById('to-date').value = now.toISOString().slice(0, 10);
             refreshData();
         });
 
@@ -164,16 +227,120 @@
             }, 3000);
         }
 
-        // Fetch data from backend
-        async function refreshData() {
+        // Configurações
+        const REQUEST_TIMEOUT_MS = 30000; // 30 segundos de timeout
+        let isLoading = false; // Flag para evitar múltiplos refreshes simultâneos
+
+        // Reads the from/to inputs and converts to ISO timestamps the connector
+        // expects (start-of-day for from, end-of-day for to).
+        function getCurrentWindow() {
+            const fromVal = document.getElementById('from-date').value;
+            const toVal = document.getElementById('to-date').value;
+            if (!fromVal || !toVal) return null;
+            const fromIso = `${fromVal}T00:00:00.000Z`;
+            const toIso = `${toVal}T23:59:59.999Z`;
+            return { fromIso, toIso, fromVal, toVal };
+        }
+
+        // Returns days between two YYYY-MM-DD strings, inclusive.
+        function diffDays(fromVal, toVal) {
+            const fromDt = new Date(fromVal);
+            const toDt = new Date(toVal);
+            return Math.round((toDt - fromDt) / (24 * 60 * 60 * 1000));
+        }
+
+        // Change period and reload data
+        function changePeriod() {
+            if (isLoading) return; // Evita mudança de período durante loading
+            const win = getCurrentWindow();
+            if (!win) return;
+            if (diffDays(win.fromVal, win.toVal) > MAX_WINDOW_DAYS) {
+                showToast(`Janela máxima é de ${MAX_WINDOW_DAYS} dias.`, 'error');
+                return;
+            }
+            if (win.fromVal > win.toVal) {
+                showToast('Data inicial deve ser anterior à final.', 'error');
+                return;
+            }
+            refreshData();
+        }
+
+        // Atualiza estado dos controles durante loading
+        function setControlsEnabled(enabled) {
+            const refreshButton = document.getElementById('refresh-button');
+            const fromInput = document.getElementById('from-date');
+            const toInput = document.getElementById('to-date');
+            const statusSelect = document.getElementById('status-filter');
+            const sortSelect = document.getElementById('sort-by');
+
+            refreshButton.disabled = !enabled;
+            fromInput.disabled = !enabled;
+            toInput.disabled = !enabled;
+            statusSelect.disabled = !enabled;
+            sortSelect.disabled = !enabled;
+
+            if (enabled) {
+                refreshButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                refreshButton.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+        }
+        
+        // Fetch data from backend com timeout.
+        // `incremental=true` (passed by the Atualizar button) bumps the
+        // window's end to the actual current time so any rows that landed
+        // since the last cache fill are picked up, then asks the backend
+        // to only fetch the delta.
+        async function refreshData(incremental = false) {
+            // Evita múltiplos refreshes simultâneos
+            if (isLoading) {
+                console.log('Refresh já em andamento, ignorando...');
+                return;
+            }
+
+            isLoading = true;
+            const refreshIcon = document.getElementById('refresh-icon');
+
+            // Desabilita todos os controles
+            setControlsEnabled(false);
+            refreshIcon.classList.add('animate-spin');
+
             try {
-                showToast('Carregando dados...', 'info');
+                const win = getCurrentWindow();
+                if (!win) {
+                    showToast('Selecione uma data inicial e final.', 'error');
+                    return;
+                }
+                // On incremental refresh, push `to` to the current moment so
+                // a same-day refresh pulls rows that arrived in the meantime.
+                const toIso = incremental
+                    ? new Date().toISOString()
+                    : win.toIso;
+                showToast(
+                    incremental
+                        ? `Buscando dados novos (${win.fromVal} → agora)...`
+                        : `Carregando dados (${win.fromVal} → ${win.toVal})...`,
+                    'info'
+                );
+
+                // Cria uma promise com timeout
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS);
+                });
+
+                // Race entre a chamada da função e o timeout
+                const result = await Promise.race([
+                    get_detailed_user_activity(win.fromIso, toIso, incremental),
+                    timeoutPromise
+                ]);
                 
-                const data = await get_authors_activity();
-                allData = data.map(row => ({
-                    ...row,
-                    days_inactive: calculateDaysInactive(row.last_activity)
-                }));
+                allData = result.users || [];
+                currentStats = result.stats || {};
+                
+                // Update last updated timestamp
+                const now = new Date();
+                document.getElementById('last-updated').textContent = 
+                    `Atualizado: ${now.toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
                 
                 updateStats();
                 filterTable();
@@ -181,46 +348,85 @@
                 showToast('Dados atualizados com sucesso!');
             } catch (error) {
                 console.error('Error fetching data:', error);
-                showToast('Erro ao carregar dados: ' + error.message, 'error');
                 
-                document.getElementById('authors-table-body').innerHTML = `
-                    <tr>
-                        <td colspan="6" class="px-6 py-8 text-center text-rose-500">
-                            ❌ Erro ao carregar dados. Verifique o console para mais detalhes.
-                        </td>
-                    </tr>
-                `;
+                // Verifica se foi timeout do frontend
+                if (error.message === 'TIMEOUT') {
+                    showToast('Tempo limite excedido (30s). Tente reduzir o período de análise.', 'error');
+                    
+                    document.getElementById('authors-table-body').innerHTML = `
+                        <tr>
+                            <td colspan="8" class="px-6 py-8 text-center">
+                                <div class="text-rose-500 font-medium mb-2">⏱️ Tempo limite excedido</div>
+                                <div class="text-slate-600 text-sm">
+                                    A consulta demorou mais de 30 segundos.<br>
+                                    Isso pode acontecer quando há muitos logs para processar.<br><br>
+                                    <strong>Sugestão:</strong> Tente analisar um período menor (ex: 7 dias em vez de 30).
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                } 
+                // Verifica se foi timeout da paginação no backend
+                else if (error.message && error.message.includes('TIMEOUT_PAGINATION')) {
+                    const timeoutMsg = error.message.replace('TIMEOUT_PAGINATION:', '').trim();
+                    showToast('Tempo limite na busca de logs. Tente um período menor.', 'error');
+                    
+                    document.getElementById('authors-table-body').innerHTML = `
+                        <tr>
+                            <td colspan="8" class="px-6 py-8 text-center">
+                                <div class="text-rose-500 font-medium mb-2">⏱️ Timeout na busca de dados</div>
+                                <div class="text-slate-600 text-sm">
+                                    ${escapeHtml(timeoutMsg)}<br><br>
+                                    <strong>Sugestão:</strong> Reduza o período de análise usando o seletor acima.<br>
+                                    <em>Dica: O cache será reutilizado se você voltar a este período em até 5 minutos.</em>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    showToast('Erro ao carregar dados: ' + error.message, 'error');
+                    
+                    document.getElementById('authors-table-body').innerHTML = `
+                        <tr>
+                            <td colspan="8" class="px-6 py-8 text-center text-rose-500">
+                                ❌ Erro ao carregar dados: ${escapeHtml(error.message)}
+                            </td>
+                        </tr>
+                    `;
+                }
+            } finally {
+                // Reabilita os controles independente do resultado
+                isLoading = false;
+                refreshIcon.classList.remove('animate-spin');
+                setControlsEnabled(true);
             }
-        }
-
-        // Calculate days since last activity (null = never logged in)
-        function calculateDaysInactive(lastActivity) {
-            if (!lastActivity) return null;
-            const lastDate = new Date(lastActivity);
-            const now = new Date();
-            const diffTime = Math.abs(now - lastDate);
-            return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        }
-
-        function isActiveRow(row) {
-            return row.days_inactive !== null && row.days_inactive <= INACTIVE_THRESHOLD_DAYS;
-        }
-
-        function isNeverRow(row) {
-            return row.days_inactive === null;
         }
 
         // Update statistics cards
         function updateStats() {
-            const total = allData.length;
-            const active = allData.filter(isActiveRow).length;
-            const never = allData.filter(isNeverRow).length;
-            const inactive = total - active - never;
+            document.getElementById('stat-total').textContent = currentStats.total || 0;
+            document.getElementById('stat-active').textContent = currentStats.active || 0;
+            document.getElementById('stat-inactive').textContent = currentStats.inactive || 0;
+            document.getElementById('stat-projects').textContent = currentStats.total_projects || 0;
+            document.getElementById('stat-actions').textContent = currentStats.total_actions || 0;
+        }
 
-            document.getElementById('stat-total').textContent = total;
-            document.getElementById('stat-active').textContent = active;
-            document.getElementById('stat-inactive').textContent = inactive;
-            document.getElementById('stat-never').textContent = never;
+        // Get status badge HTML
+        function getStatusBadge(status) {
+            const config = {
+                'ACTIVE': { class: 'status-active', text: 'Ativo', icon: '✓' },
+                'INACTIVE': { class: 'status-inactive', text: 'Inativo', icon: '⏸' },
+            };
+            const cfg = config[status] || config['INACTIVE'];
+            return `<span class="status-badge ${cfg.class}">${cfg.icon} ${cfg.text}</span>`;
+        }
+
+        // Get CSS class for days inactive within the selected window.
+        function getDaysClass(days) {
+            if (days === null) return 'days-danger';
+            if (days <= 7) return 'days-recent';
+            if (days <= 30) return 'days-warning';
+            return 'days-danger';
         }
 
         // Filter table based on search and status
@@ -230,13 +436,11 @@
 
             filteredData = allData.filter(row => {
                 const matchesSearch = !searchTerm ||
-                    (row.author_id && row.author_id.toLowerCase().includes(searchTerm)) ||
-                    (row.author_email && row.author_email.toLowerCase().includes(searchTerm));
+                    (row.author_email && row.author_email.toLowerCase().includes(searchTerm)) ||
+                    (row.author_name && row.author_name.toLowerCase().includes(searchTerm)) ||
+                    (row.author_id && row.author_id.toLowerCase().includes(searchTerm));
 
-                const matchesStatus = statusFilter === 'all' ||
-                    (statusFilter === 'active' && isActiveRow(row)) ||
-                    (statusFilter === 'inactive' && !isActiveRow(row) && !isNeverRow(row)) ||
-                    (statusFilter === 'never' && isNeverRow(row));
+                const matchesStatus = statusFilter === 'all' || row.status === statusFilter;
 
                 return matchesSearch && matchesStatus;
             });
@@ -244,33 +448,62 @@
             sortTable();
         }
 
-        // Sort table — null last_activity always pushed to bottom regardless of direction
+        // Sort table
         function sortTable() {
             const sortBy = document.getElementById('sort-by').value;
 
             filteredData.sort((a, b) => {
-                if (sortBy.startsWith('last_activity')) {
-                    if (!a.last_activity && !b.last_activity) return 0;
-                    if (!a.last_activity) return 1;
-                    if (!b.last_activity) return -1;
-                    return sortBy === 'last_activity_desc'
-                        ? new Date(b.last_activity) - new Date(a.last_activity)
-                        : new Date(a.last_activity) - new Date(b.last_activity);
+                switch (sortBy) {
+                    case 'status':
+                        const statusOrder = { 'ACTIVE': 0, 'INACTIVE': 1 };
+                        const orderA = statusOrder[a.status] ?? 2;
+                        const orderB = statusOrder[b.status] ?? 2;
+                        const statusDiff = orderA - orderB;
+                        if (statusDiff !== 0) return statusDiff;
+                        if (!a.last_activity && !b.last_activity) {
+                            return a.author_email.localeCompare(b.author_email);
+                        }
+                        if (!a.last_activity) return 1;
+                        if (!b.last_activity) return -1;
+                        return new Date(b.last_activity) - new Date(a.last_activity);
+
+                    case 'last_activity_desc':
+                        if (!a.last_activity && !b.last_activity) return 0;
+                        if (!a.last_activity) return 1;
+                        if (!b.last_activity) return -1;
+                        return new Date(b.last_activity) - new Date(a.last_activity);
+
+                    case 'last_activity_asc':
+                        if (!a.last_activity && !b.last_activity) return 0;
+                        if (!a.last_activity) return 1;
+                        if (!b.last_activity) return -1;
+                        return new Date(a.last_activity) - new Date(b.last_activity);
+
+                    case 'logins_desc':
+                        return (b.total_logins || 0) - (a.total_logins || 0);
+
+                    case 'logins_asc':
+                        return (a.total_logins || 0) - (b.total_logins || 0);
+
+                    case 'projects_desc':
+                        return (b.projects_created || 0) - (a.projects_created || 0);
+
+                    case 'actions_desc':
+                        return (b.total_actions || 0) - (a.total_actions || 0);
+
+                    default:
+                        return 0;
                 }
-                if (sortBy === 'events_desc') return (b.total_logins || 0) - (a.total_logins || 0);
-                if (sortBy === 'events_asc') return (a.total_logins || 0) - (b.total_logins || 0);
-                return 0;
             });
 
             renderTable();
         }
 
-        // Get CSS class for days inactive
-        function getDaysClass(days) {
-            if (days === null) return 'days-danger';
-            if (days <= 7) return 'days-recent';
-            if (days <= 30) return 'days-warning';
-            return 'days-danger';
+        // Computes "days since" for a given ISO timestamp, relative to now.
+        function daysSince(iso) {
+            if (!iso) return null;
+            const then = new Date(iso);
+            return Math.floor((Date.now() - then.getTime()) / (24 * 60 * 60 * 1000));
         }
 
         // Render table rows
@@ -280,7 +513,7 @@
             if (filteredData.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="6" class="px-6 py-8 text-center text-slate-500">
+                        <td colspan="8" class="px-6 py-8 text-center text-slate-500">
                             Nenhum resultado encontrado.
                         </td>
                     </tr>
@@ -289,37 +522,48 @@
             }
 
             tbody.innerHTML = filteredData.map(row => {
-                const never = isNeverRow(row);
-                const active = isActiveRow(row);
-                const statusClass = never ? 'status-inactive' : (active ? 'status-active' : 'status-inactive');
-                const statusText = never ? 'Never logged in' : (active ? 'Ativo' : 'Inativo');
-                const daysClass = getDaysClass(row.days_inactive);
-                const daysText = never ? '—' : `${row.days_inactive} dias`;
-                const lastActivityText = never ? '—' : formatDateTime(row.last_activity);
+                const status = row.status || 'INACTIVE';
+                const daysInactive = daysSince(row.last_activity);
+                const daysClass = getDaysClass(daysInactive);
+                const daysText = daysInactive === null ? '—' : `${daysInactive} dias`;
+
+                const lastLoginText = row.last_login ? formatDateTime(row.last_login) : '—';
+                const lastActivityText = row.last_activity ? formatDateTime(row.last_activity) : '—';
+
+                const projectsCell = row.projects_created > 0
+                    ? `<span class="metric-badge metric-projects" title="${row.last_project_created ? 'Último: ' + formatDateTime(row.last_project_created) : ''}">${row.projects_created}</span>`
+                    : '—';
 
                 return `
                     <tr class="hover:bg-slate-50">
-                        <td class="px-6 py-4">
-                            <code class="text-xs bg-slate-100 px-2 py-1 rounded truncate-cell" title="${escapeHtml(row.author_id || 'N/A')}">
-                                ${escapeHtml(truncateString(row.author_id || 'N/A', 20))}
-                            </code>
+                        <td class="px-4 py-4">
+                            <div class="flex flex-col">
+                                <span class="text-sm font-medium text-slate-800 truncate-cell" style="max-width: 200px;" title="${escapeHtml(row.author_email || 'N/A')}">
+                                    ${escapeHtml(row.author_email || 'N/A')}
+                                </span>
+                                <code class="text-xs text-slate-500 mt-1" title="${escapeHtml(row.author_id || 'N/A')}">
+                                    ${escapeHtml(truncateString(row.author_id || 'N/A', 12))}
+                                </code>
+                            </div>
                         </td>
-                        <td class="px-6 py-4 text-sm text-slate-700 truncate-cell" title="${escapeHtml(row.author_email || 'N/A')}">
-                            ${escapeHtml(row.author_email || 'N/A')}
+                        <td class="px-4 py-4">
+                            ${getStatusBadge(status)}
                         </td>
-                        <td class="px-6 py-4 text-sm text-slate-700">
+                        <td class="px-4 py-4 text-sm text-slate-700">
+                            ${lastLoginText}
+                        </td>
+                        <td class="px-4 py-4 text-sm text-slate-700">
                             ${lastActivityText}
                         </td>
-                        <td class="px-6 py-4 text-sm ${daysClass}">
+                        <td class="px-4 py-4 text-sm ${daysClass}">
                             ${daysText}
                         </td>
-                        <td class="px-6 py-4 text-sm text-slate-700">
-                            ${row.total_logins || 0}
+                        <td class="px-4 py-4 text-center">${projectsCell}</td>
+                        <td class="px-4 py-4 text-center text-sm text-slate-700">
+                            ${row.total_actions || 0}
                         </td>
-                        <td class="px-6 py-4">
-                            <span class="status-badge ${statusClass}">
-                                ${statusText}
-                            </span>
+                        <td class="px-4 py-4 text-center text-sm text-slate-700">
+                            ${row.total_logins || 0}
                         </td>
                     </tr>
                 `;
@@ -328,7 +572,7 @@
 
         // Format date for display
         function formatDateTime(dateString) {
-            if (!dateString) return 'N/A';
+            if (!dateString) return '—';
             const date = new Date(dateString);
             return date.toLocaleString('pt-BR', {
                 day: '2-digit', month: '2-digit', year: 'numeric',
@@ -357,16 +601,35 @@
                 return;
             }
             
-            const headers = ['Author ID', 'Email', 'Última Atividade', 'Dias Inativo', 'Total de Logins', 'Status'];
+            const headers = [
+                'Author ID', 'Email', 'Nome', 'Status',
+                'Último Login', 'Última Atividade', 'Dias Inativo',
+                'Total de Logins', 'Logins Sucesso', 'Logins Falha',
+                'Projetos Criados', 'Último Projeto Criado',
+                'Total Ações'
+            ];
+
             const rows = filteredData.map(row => {
-                const status = isNeverRow(row) ? 'Never logged in' : (isActiveRow(row) ? 'Ativo' : 'Inativo');
+                const statusMap = {
+                    'ACTIVE': 'Ativo',
+                    'INACTIVE': 'Inativo',
+                };
+
+                const days = daysSince(row.last_activity);
                 return [
                     row.author_id || '',
                     row.author_email || '',
+                    row.author_name || '',
+                    statusMap[row.status] || row.status || '',
+                    row.last_login || '',
                     row.last_activity || '',
-                    row.days_inactive === null ? '' : row.days_inactive,
+                    days === null ? '' : days,
                     row.total_logins || 0,
-                    status
+                    row.success_count || 0,
+                    row.failure_count || 0,
+                    row.projects_created || 0,
+                    row.last_project_created || '',
+                    row.total_actions || 0
                 ];
             });
             
@@ -378,7 +641,7 @@
             const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `authors_activity_${new Date().toISOString().split('T')[0]}.csv`;
+            link.download = `audit_users_${new Date().toISOString().split('T')[0]}.csv`;
             link.click();
             
             showToast('CSV exportado com sucesso!');
