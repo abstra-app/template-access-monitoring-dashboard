@@ -28,11 +28,15 @@ MAX_CACHED_ENTRIES_PER_TYPE = 200_000  # rough memory cap; ~40-50 MB per type
 MAX_WINDOW_DAYS = 31  # mirrors the server-side cap
 
 # Each log type's cache is a list of {from, to, data, timestamp} entries.
-# `members` is a singleton because it's not window-scoped.
+# `members` and `organization` are singletons because they're not window-scoped.
 _cache = {
     "auth_logs": [],
     "action_logs": [],
+    "connector_action_logs": [],
+    "email_notifications": [],
+    "ai_prompts": [],
     "members": {"data": None, "timestamp": 0},
+    "organization": {"data": None, "timestamp": 0},
 }
 
 
@@ -109,39 +113,106 @@ def _cache_insert(log_type: str, from_iso: str, to_iso: str, data: list) -> None
 # Connector calls
 # ---------------------------------------------------------------------------
 
-PAGINATION_TIMEOUT_SECONDS = 25  # 5s margin under the frontend's 30s
+PAGINATION_TIMEOUT_SECONDS = 85  # 5s margin under the frontend's 90s
+# Default row cap for the connector_action_logs pagination, applied alongside
+# the time budget. Trips PaginationTimeoutError (with partial_logs populated)
+# once exceeded; the dashboard surfaces a "Load more" button so the user can
+# explicitly opt into a larger cap.
+DEFAULT_CONNECTOR_MAX_ROWS = 20_000
 
 
 class PaginationTimeoutError(Exception):
-    """Raised when paginating through a log type takes too long."""
-    pass
+    """Raised when paginating through a log type stops early — either the
+    time budget elapsed or a row cap (max_rows) was reached.
+
+    `partial_logs` carries everything _paginate managed to fetch before
+    stopping. `next_cursor` is the connector cursor we'd resume from on a
+    follow-up call (the Projetos tab uses this to power the "Carregar mais"
+    button — fetches the NEXT chunk instead of refetching everything)."""
+
+    def __init__(
+        self,
+        message: str,
+        partial_logs: list | None = None,
+        next_cursor: str | None = None,
+    ):
+        super().__init__(message)
+        self.partial_logs = partial_logs or []
+        self.next_cursor = next_cursor
+
+
+_LOG_TYPE_BY_ACTION = {
+    "get_auth_attempt_logs": "auth_logs",
+    "get_action_logs": "action_logs",
+    "get_connector_action_logs": "connector_action_logs",
+    "get_email_notification_logs": "email_notifications",
+    "get_ai_prompt_logs": "ai_prompts",
+}
 
 
 def _log_type_for_action(action_name: str) -> str:
-    return "auth_logs" if "auth" in action_name else "action_logs"
+    return _LOG_TYPE_BY_ACTION.get(action_name, "action_logs")
 
 
-def _paginate(action_name: str, from_iso: str, to_iso: str) -> list:
-    """Pages through every entry the connector returns for the given window.
-    Raises PaginationTimeoutError if total time exceeds the budget."""
+def _paginate(
+    action_name: str,
+    from_iso: str,
+    to_iso: str,
+    extra_params: dict | None = None,
+    max_rows: int | None = None,
+    start_cursor: str | None = None,
+) -> list:
+    """Pages through entries the connector returns for the given window.
+
+    `extra_params` is merged into each paginated request so callers can apply
+    server-side filters (e.g. `{"source": "app"}` on connector_action_logs).
+
+    `max_rows`, when set, stops pagination once that many rows have been
+    accumulated and raises PaginationTimeoutError with the partial data and
+    the cursor where we stopped (so a continuation call can resume from
+    there).
+
+    `start_cursor`, when set, resumes pagination from that point instead of
+    starting from page 1 — used by the Projetos tab's "Carregar mais" flow.
+
+    Raises PaginationTimeoutError if total time exceeds the per-action budget
+    or the row cap is exceeded; the exception carries `partial_logs` and
+    `next_cursor` for resumption."""
     all_logs: list = []
-    cursor = None
+    cursor = start_cursor
     pages_fetched = 0
     start_time = time.time()
+    label = action_name + (
+        f" [{','.join(f'{k}={v}' for k, v in extra_params.items())}]" if extra_params else ""
+    )
 
     while True:
         elapsed = time.time() - start_time
         if elapsed > PAGINATION_TIMEOUT_SECONDS:
             print(
-                f"  {action_name}: TIMEOUT after {elapsed:.1f}s "
-                f"({pages_fetched} pages, {len(all_logs)} logs)"
+                f"  {label}: TIMEOUT after {elapsed:.1f}s "
+                f"({pages_fetched} pages, {len(all_logs)} logs) — returning partial"
             )
             raise PaginationTimeoutError(
                 f"Log fetch took longer than {PAGINATION_TIMEOUT_SECONDS}s. "
-                f"Try a smaller window."
+                f"Try a smaller window.",
+                partial_logs=all_logs,
+                next_cursor=cursor,
+            )
+        if max_rows is not None and len(all_logs) >= max_rows:
+            print(
+                f"  {label}: ROW CAP reached at {len(all_logs)} logs "
+                f"({pages_fetched} pages, {elapsed:.1f}s) — returning partial"
+            )
+            raise PaginationTimeoutError(
+                f"Row cap of {max_rows} reached.",
+                partial_logs=all_logs,
+                next_cursor=cursor,
             )
 
-        params = {"from": from_iso, "to": to_iso, "limit": 500}
+        params: dict = {"from": from_iso, "to": to_iso, "limit": 500}
+        if extra_params:
+            params.update(extra_params)
         if cursor:
             params["cursor"] = cursor
 
@@ -150,7 +221,7 @@ def _paginate(action_name: str, from_iso: str, to_iso: str) -> list:
         all_logs.extend(logs)
         pages_fetched += 1
         print(
-            f"  {action_name}: page {pages_fetched} - {len(logs)} logs "
+            f"  {label}: page {pages_fetched} - {len(logs)} logs "
             f"(total: {len(all_logs)}, elapsed: {time.time() - start_time:.1f}s)"
         )
 
@@ -160,9 +231,52 @@ def _paginate(action_name: str, from_iso: str, to_iso: str) -> list:
     return all_logs
 
 
-def fetch_logs(action_name: str, from_iso: str, to_iso: str) -> list:
+def _paginate_connector_production(
+    from_iso: str,
+    to_iso: str,
+    max_rows: int | None = None,
+    start_cursor: str | None = None,
+) -> list:
+    """Server-side filtered fetch for connector_action_logs, source=app only.
+
+    `source=app` represents deployed-runtime invocations (workflows running in
+    production env). Other sources are excluded:
+    - `editor`: developer testing in the IDE.
+    - `ai`: agent-initiated calls, may run in either dev or prod.
+    - `api`: external API callers hitting the project's endpoints — these are
+      consumers OF the project, not the project running, so they're not the
+      "is this project being executed in production" signal we're after.
+
+    Single paginated call (vs. two with source=app+api) — cuts both data
+    volume and total time roughly in half. `max_rows` caps how much we'll
+    accumulate before stopping (see _paginate).
+    """
+    return _paginate(
+        "get_connector_action_logs",
+        from_iso,
+        to_iso,
+        {"source": "app"},
+        max_rows=max_rows,
+        start_cursor=start_cursor,
+    )
+
+
+def fetch_logs(
+    action_name: str,
+    from_iso: str,
+    to_iso: str,
+    max_rows: int | None = None,
+) -> list:
     """Cache-first read. Returns logs for the requested window, fetching from
-    the connector only if no cached entry covers the range."""
+    the connector only if no cached entry covers the range.
+
+    For connector_action_logs we use a server-side production filter — see
+    _paginate_connector_production. The cache slot stores production-only
+    data; nothing in the dashboard reads the unfiltered version, so we don't
+    need a separate cache slot.
+
+    `max_rows` (only used by the connector path) caps how much we'll fetch
+    before raising PaginationTimeoutError with partial data."""
     log_type = _log_type_for_action(action_name)
 
     cached = _cache_lookup(log_type, from_iso, to_iso)
@@ -170,12 +284,20 @@ def fetch_logs(action_name: str, from_iso: str, to_iso: str) -> list:
         print(f"  {action_name}: cache hit ({len(cached)} logs)")
         return cached
 
-    all_logs = _paginate(action_name, from_iso, to_iso)
+    if action_name == "get_connector_action_logs":
+        all_logs = _paginate_connector_production(from_iso, to_iso, max_rows=max_rows)
+    else:
+        all_logs = _paginate(action_name, from_iso, to_iso)
     _cache_insert(log_type, from_iso, to_iso, all_logs)
     return all_logs
 
 
-def fetch_logs_incremental(action_name: str, from_iso: str, to_iso: str) -> list:
+def fetch_logs_incremental(
+    action_name: str,
+    from_iso: str,
+    to_iso: str,
+    max_rows: int | None = None,
+) -> list:
     """Refresh-friendly read. If a cached entry's `from` <= requested `from`,
     only the delta from `cached.to` to `to_iso` is fetched and appended (audit
     logs are append-only, so existing cached rows can't change). Falls back to
@@ -191,13 +313,19 @@ def fetch_logs_incremental(action_name: str, from_iso: str, to_iso: str) -> list
             if candidate is None or entry["to"] > candidate["to"]:
                 candidate = entry
 
+    paginate = (
+        (lambda f, t: _paginate_connector_production(f, t, max_rows=max_rows))
+        if action_name == "get_connector_action_logs"
+        else (lambda f, t: _paginate(action_name, f, t))
+    )
+
     if candidate is None:
-        all_logs = _paginate(action_name, from_iso, to_iso)
+        all_logs = paginate(from_iso, to_iso)
         _cache_insert(log_type, from_iso, to_iso, all_logs)
         return all_logs
 
     if candidate["to"] < to_iso:
-        delta = _paginate(action_name, candidate["to"], to_iso)
+        delta = paginate(candidate["to"], to_iso)
         candidate["data"].extend(delta)
         candidate["to"] = to_iso
         print(f"  {action_name}: appended {len(delta)} new entries to cache")
@@ -221,6 +349,22 @@ def get_members_cached(force_refresh: bool = False) -> list:
     members = run_connection_action(CONNECTION_NAME, "get_members", {}) or []
     _cache["members"] = {"data": members, "timestamp": time.time()}
     return members
+
+
+def get_organization_cached(force_refresh: bool = False) -> dict:
+    """Organization metadata (folders + projects). Single cache slot with TTL.
+    Used by the Projetos tab to resolve project_id -> {name, folder_name}."""
+    entry = _cache["organization"]
+    if (
+        not force_refresh
+        and entry["data"] is not None
+        and time.time() - entry["timestamp"] <= CACHE_TTL_SECONDS
+    ):
+        return entry["data"]
+
+    org = run_connection_action(CONNECTION_NAME, "get_organization", {}) or {}
+    _cache["organization"] = {"data": org, "timestamp": time.time()}
+    return org
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +565,301 @@ def _iso_to_epoch(iso: str | None):
         return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Per-project activity proxy (production signal across 3 log types)
+# ---------------------------------------------------------------------------
+
+# Sources that count as production-side activity, used to filter rows whose
+# `source` field tells us where the call came from. Entries from `editor`
+# (devs testing in the IDE) or `ai` (agent-initiated) are excluded so the
+# count reflects deployed-app traffic.
+#
+# For connector_action_logs we apply this filter SERVER-SIDE via two
+# paginated calls (see _paginate_connector_production). For ai_prompts the
+# connector doesn't expose a source filter, so this helper is used
+# client-side after the fetch.
+_PRODUCTION_SOURCES = {"app", "api"}
+
+
+def _is_production_source(source: str | None) -> bool:
+    return source is None or source in _PRODUCTION_SOURCES
+
+
+# email_notifications.kind identifies the type of mail. We exclude two cases:
+# - kinds ending in `:mock` are sent by the editor's "Test email" feature
+#   (sendMockEmail, controllers/email.ts:58), not real production mail.
+# - `received` records inbound mail the system received, not production
+#   outbound activity.
+def _is_production_email_kind(kind: str | None) -> bool:
+    if not kind:
+        return False
+    if kind.endswith(":mock"):
+        return False
+    if kind == "received":
+        return False
+    return True
+
+
+def _empty_project_bucket() -> dict:
+    return {
+        "connector_actions": 0,
+        "emails_sent": 0,
+        "ai_prompts": 0,
+        "last_activity": None,
+    }
+
+
+def _accumulate_project(per_project: dict, log: dict, count_field: str) -> None:
+    pid = log.get("projectId")
+    if not pid:
+        return
+    bucket = per_project.setdefault(pid, _empty_project_bucket())
+    bucket[count_field] += 1
+    created_at = log.get("createdAt")
+    if created_at and (not bucket["last_activity"] or created_at > bucket["last_activity"]):
+        bucket["last_activity"] = created_at
+
+
+def _resolve_project_metadata(force_refresh: bool) -> dict:
+    """Returns {project_id: {name, folder_name}} from get_organization."""
+    org_data = get_organization_cached(force_refresh=force_refresh)
+    projects_meta: dict = {}
+    for folder in (org_data or {}).get("folders", []) or []:
+        folder_name = folder.get("name", "")
+        for proj in folder.get("projects", []) or []:
+            projects_meta[proj["id"]] = {
+                "name": proj.get("name", ""),
+                "folder_name": folder_name,
+            }
+    return projects_meta
+
+
+@register_function
+def get_project_activity_lite(
+    from_iso: str = "",
+    to_iso: str = "",
+    incremental: bool = False,
+):
+    """Fast pass for the Projetos tab. Aggregates emails sent + AI prompts
+    per project (the two smaller log types). Connector actions are NOT
+    included here — fetch them separately via get_project_connector_activity
+    in the background, since connector_action_logs is much larger and slower.
+
+    Returns the same shape as get_project_connector_activity merge target,
+    with `connector_actions` always 0. Frontend should call
+    get_project_connector_activity afterwards and merge the results.
+    """
+    if not from_iso or not to_iso:
+        from_iso, to_iso = _default_window(days=30)
+
+    try:
+        _validate_window(from_iso, to_iso)
+    except ValueError as e:
+        raise Exception(f"INVALID_WINDOW: {e}")
+
+    print(f"=== Project activity LITE for {from_iso} -> {to_iso} (incremental={incremental}) ===")
+
+    fetcher = fetch_logs_incremental if incremental else fetch_logs
+
+    try:
+        projects_meta = _resolve_project_metadata(force_refresh=incremental)
+        print(f"  Projects: {len(projects_meta)}")
+
+        email_logs = fetcher("get_email_notification_logs", from_iso, to_iso)
+        prompt_logs = fetcher("get_ai_prompt_logs", from_iso, to_iso)
+
+        per_project: dict = {}
+        for log in email_logs:
+            if not _is_production_email_kind(log.get("kind")):
+                continue
+            _accumulate_project(per_project, log, "emails_sent")
+        for log in prompt_logs:
+            if not _is_production_source(log.get("source")):
+                continue
+            _accumulate_project(per_project, log, "ai_prompts")
+
+        all_projects = []
+        for pid, meta in projects_meta.items():
+            bucket = per_project.get(pid) or _empty_project_bucket()
+            all_projects.append(_build_project_record(pid, meta, bucket))
+        for pid, bucket in per_project.items():
+            if pid in projects_meta:
+                continue
+            all_projects.append(
+                _build_project_record(
+                    pid,
+                    {"name": "(unknown)", "folder_name": "(unknown)"},
+                    bucket,
+                )
+            )
+
+        all_projects.sort(
+            key=lambda p: (
+                -p["total_activity"],
+                -(_iso_to_epoch(p["last_activity"]) or 0),
+                p["project_name"],
+            )
+        )
+
+        stats = {
+            "total_projects": len(all_projects),
+            "active_projects": sum(1 for p in all_projects if p["total_activity"] > 0),
+            "total_connector_actions": 0,  # filled in by the connector pass
+            "total_emails_sent": sum(p["emails_sent"] for p in all_projects),
+            "total_ai_prompts": sum(p["ai_prompts"] for p in all_projects),
+        }
+        return {
+            "projects": all_projects,
+            "stats": stats,
+            "window": {"from": from_iso, "to": to_iso},
+        }
+
+    except PaginationTimeoutError as e:
+        raise Exception(f"TIMEOUT_PAGINATION: {e}")
+    except Exception as e:
+        if str(e).startswith(("INVALID_WINDOW:", "TIMEOUT_PAGINATION:")):
+            raise
+        import traceback
+        traceback.print_exc()
+        raise Exception(f"Erro na consulta: {e}")
+
+
+@register_function
+def get_project_connector_activity(
+    from_iso: str = "",
+    to_iso: str = "",
+    incremental: bool = False,
+    max_rows: int | None = None,
+    start_cursor: str | None = None,
+):
+    """Slow pass for the Projetos tab. Aggregates connector_action_logs
+    (filtered to source=app) by project. Designed to be called in the
+    background after get_project_activity_lite has already rendered the
+    table; the frontend merges the result by project_id.
+
+    `max_rows` defaults to DEFAULT_CONNECTOR_MAX_ROWS. When pagination hits
+    that cap (or the time budget), the response is returned with
+    `partial=true`, the truncated data, and `next_cursor` pointing to where
+    the next page would start. The dashboard's "Carregar mais" button calls
+    back with that cursor in `start_cursor` to fetch the NEXT chunk —
+    instead of refetching from page 1 with a larger cap.
+
+    Cache behavior:
+    - `start_cursor=None` (initial fresh call): goes through fetch_logs,
+      cache-aware. If a covering window is already cached AND complete, we
+      return it instantly.
+    - `start_cursor=<cursor>` (continuation call): bypasses cache and
+      paginates directly from the given cursor. The response represents the
+      DELTA fetched in this call only; the frontend is responsible for
+      merging into accumulated state.
+
+    Returns:
+        by_project:  {project_id: {count: int, last_activity: iso}}
+                     — counts in THIS call only (delta semantics)
+        total:       count fetched in THIS call
+        partial:     true if pagination hit the row cap or time budget
+        next_cursor: cursor to continue from (only meaningful when partial)
+        window:      {from, to} echoed back
+    """
+    if max_rows is None:
+        max_rows = DEFAULT_CONNECTOR_MAX_ROWS
+    if not from_iso or not to_iso:
+        from_iso, to_iso = _default_window(days=30)
+
+    try:
+        _validate_window(from_iso, to_iso)
+    except ValueError as e:
+        raise Exception(f"INVALID_WINDOW: {e}")
+
+    print(
+        f"=== Project connector activity for {from_iso} -> {to_iso} "
+        f"(incremental={incremental}, max_rows={max_rows}, "
+        f"continuation={start_cursor is not None}) ==="
+    )
+
+    # connector_action_logs can have very high volume (tens of thousands of
+    # rows in 30 days for a busy org). When pagination exceeds the budget we
+    # accept the truncated data and flag it `partial=true` instead of erroring
+    # — the dashboard renders the partial counts with a marker so the user
+    # knows what they're looking at, and offers a "Carregar mais" button to
+    # continue from the saved cursor.
+    partial = False
+    next_cursor = None
+    try:
+        if start_cursor:
+            # Continuation: bypass cache, paginate directly from cursor.
+            # Cache only stores complete windows; partial data is never
+            # cached, so a continuation call always re-paginates from where
+            # we left off rather than from page 1.
+            connector_logs = _paginate_connector_production(
+                from_iso, to_iso, max_rows=max_rows, start_cursor=start_cursor,
+            )
+        else:
+            # Fresh call: cache-aware path.
+            # Server-side filtered to source=app via the connector's `source`
+            # param (see _paginate_connector_production). No need to filter again.
+            fetcher = fetch_logs_incremental if incremental else fetch_logs
+            connector_logs = fetcher(
+                "get_connector_action_logs", from_iso, to_iso, max_rows=max_rows,
+            )
+    except PaginationTimeoutError as e:
+        connector_logs = e.partial_logs
+        next_cursor = e.next_cursor
+        partial = True
+        print(
+            f"  PARTIAL: {len(connector_logs)} connector logs accumulated "
+            f"before stop; next_cursor={'<set>' if next_cursor else '<none>'}"
+        )
+    except Exception as e:
+        if str(e).startswith(("INVALID_WINDOW:", "TIMEOUT_PAGINATION:")):
+            raise
+        import traceback
+        traceback.print_exc()
+        raise Exception(f"Erro na consulta: {e}")
+
+    by_project: dict = {}
+    total = 0
+    for log in connector_logs:
+        pid = log.get("projectId")
+        if not pid:
+            continue
+        entry = by_project.setdefault(pid, {"count": 0, "last_activity": None})
+        entry["count"] += 1
+        total += 1
+        created_at = log.get("createdAt")
+        if created_at and (
+            not entry["last_activity"] or created_at > entry["last_activity"]
+        ):
+            entry["last_activity"] = created_at
+
+    print(
+        f"  {total} connector actions across {len(by_project)} projects "
+        f"(partial={partial}, next_cursor={'<set>' if next_cursor else '<none>'})"
+    )
+    return {
+        "by_project": by_project,
+        "total": total,
+        "partial": partial,
+        "next_cursor": next_cursor,
+        "window": {"from": from_iso, "to": to_iso},
+    }
+
+
+def _build_project_record(pid: str, meta: dict, bucket: dict) -> dict:
+    return {
+        "project_id": pid,
+        "project_name": meta.get("name", ""),
+        "folder_name": meta.get("folder_name", ""),
+        "connector_actions": bucket["connector_actions"],
+        "emails_sent": bucket["emails_sent"],
+        "ai_prompts": bucket["ai_prompts"],
+        "total_activity": bucket["connector_actions"]
+        + bucket["emails_sent"]
+        + bucket["ai_prompts"],
+        "last_activity": bucket["last_activity"],
+    }
 
 
 # ---------------------------------------------------------------------------

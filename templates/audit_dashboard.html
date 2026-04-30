@@ -75,6 +75,16 @@
 
     <!-- Main Content -->
     <main class="max-w-7xl mx-auto p-6">
+        <!-- Tabs -->
+        <div class="border-b border-slate-200 mb-6">
+            <nav class="flex gap-6">
+                <button id="tab-users" class="tab-button px-1 py-3 text-sm font-medium border-b-2 border-indigo-600 text-indigo-700" onclick="showTab('users')">Membros</button>
+                <button id="tab-projects" class="tab-button px-1 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-800" onclick="showTab('projects')">Projetos</button>
+            </nav>
+        </div>
+
+        <!-- =============================== USERS TAB =============================== -->
+        <div id="users-tab-content">
         <!-- Stats Cards -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
@@ -185,6 +195,122 @@
                 </table>
             </div>
         </div>
+        </div>
+        <!-- =============================== /USERS TAB =============================== -->
+
+        <!-- =============================== PROJECTS TAB =============================== -->
+        <div id="projects-tab-content" class="hidden">
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Projetos</p>
+                    <p class="text-2xl font-bold text-slate-800 mt-1" id="proj-stat-total">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <p class="text-xs font-semibold text-emerald-500 uppercase tracking-wide">Ativos no período</p>
+                    <p class="text-2xl font-bold text-emerald-600 mt-1" id="proj-stat-active">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <p class="text-xs font-semibold text-blue-500 uppercase tracking-wide">Connector actions</p>
+                    <p class="text-2xl font-bold text-blue-700 mt-1" id="proj-stat-connectors">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <p class="text-xs font-semibold text-pink-500 uppercase tracking-wide">Emails enviados</p>
+                    <p class="text-2xl font-bold text-pink-700 mt-1" id="proj-stat-emails">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <p class="text-xs font-semibold text-violet-500 uppercase tracking-wide">AI prompts</p>
+                    <p class="text-2xl font-bold text-violet-700 mt-1" id="proj-stat-prompts">-</p>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200 mb-6">
+                <div class="flex flex-wrap items-center gap-4">
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Buscar Projeto</label>
+                        <input type="text" id="proj-search-input" placeholder="Nome do projeto, pasta ou ID..."
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            oninput="filterProjects()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">De</label>
+                        <input type="date" id="proj-from-date" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="changeProjectsPeriod()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Até</label>
+                        <input type="date" id="proj-to-date" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="changeProjectsPeriod()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Atividade</label>
+                        <select id="proj-activity-filter" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="filterProjects()">
+                            <option value="all">Todos</option>
+                            <option value="active">Ativos no período</option>
+                            <option value="inactive">Sem atividade</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Ordenar por</label>
+                        <select id="proj-sort-by" class="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="sortProjects()">
+                            <option value="total_desc">Atividade total (maior)</option>
+                            <option value="last_activity_desc">Última atividade (recente)</option>
+                            <option value="connectors_desc">Connector actions (maior)</option>
+                            <option value="emails_desc">Emails (maior)</option>
+                            <option value="prompts_desc">AI prompts (maior)</option>
+                            <option value="name_asc">Nome (A-Z)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-lg font-semibold text-slate-800">Atividade por Projeto</h2>
+                        <p class="text-xs text-slate-500 mt-1">Proxy baseado em integrações externas (connectors, emails, AI). Não inclui workflows que rodam só em Python ou usam apenas tabelas internas.</p>
+                    </div>
+                    <button onclick="exportProjectsCSV()" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1">
+                        📥 Exportar CSV
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Projeto</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Pasta</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Atividade total</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide" title="Chamadas de connectors com source app/api">Connectors</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Emails</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">AI prompts</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Última atividade</th>
+                            </tr>
+                        </thead>
+                        <tbody id="projects-table-body" class="divide-y divide-slate-200">
+                            <tr>
+                                <td colspan="7" class="px-6 py-8 text-center text-slate-500">
+                                    Selecione um período para carregar os dados.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- "Carregar mais" — only visible when stage 2 returned partial data -->
+                <div id="proj-load-more" class="hidden px-6 py-4 border-t border-slate-200 bg-amber-50 flex items-center justify-between gap-4">
+                    <div class="text-sm text-slate-700">
+                        <strong>Dados parciais:</strong>
+                        <span id="proj-load-more-info">limite de linhas atingido</span>.
+                        Os totais mostrados são uma amostra das ações de connectors.
+                    </div>
+                    <button id="proj-load-more-btn" onclick="loadMoreConnectors()"
+                        class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0">
+                        Carregar mais
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- =============================== /PROJECTS TAB =============================== -->
     </main>
 
     <!-- Toast Notification -->
@@ -228,7 +354,11 @@
         }
 
         // Configurações
-        const REQUEST_TIMEOUT_MS = 30000; // 30 segundos de timeout
+        // 90s upper bound for all backend calls. Matches the backend's
+        // PAGINATION_TIMEOUT_SECONDS = 85, giving the backend ~5s of margin
+        // to surface a clean response (including partial-data flag for the
+        // connector path) before the frontend hard-aborts.
+        const REQUEST_TIMEOUT_MS = 90000;
         let isLoading = false; // Flag para evitar múltiplos refreshes simultâneos
 
         // Reads the from/to inputs and converts to ISO timestamps the connector
@@ -643,7 +773,540 @@
             link.href = URL.createObjectURL(blob);
             link.download = `audit_users_${new Date().toISOString().split('T')[0]}.csv`;
             link.click();
-            
+
+            showToast('CSV exportado com sucesso!');
+        }
+
+        // =====================================================================
+        // Projects tab — two-stage load:
+        //   1. Fast pass via get_project_activity_lite (emails + AI prompts).
+        //      Renders the table immediately so the user can interact.
+        //   2. Background pass via get_project_connector_activity (slow,
+        //      paginated through connector_action_logs). On completion,
+        //      merges connector counts into the rendered rows.
+        //
+        // A request-id pattern ignores stale background results when the user
+        // changes the period before the slow fetch completes.
+        // =====================================================================
+        let projectsLoaded = false;
+        let projectsAllData = [];
+        let projectsFilteredData = [];
+        let projectsStats = {};
+        let projectsRequestId = 0;
+        let projectsConnectorsLoading = false;
+        // Set when stage 2 fails completely (no usable data — e.g. network
+        // error). Distinguishes "not yet loaded" from "tried and got nothing"
+        // so the UI can render a timeout marker instead of a misleading 0.
+        let projectsConnectorsFailed = false;
+        // Set when stage 2 returned partial data (row cap or time budget hit
+        // before all rows fetched). The numbers shown are real but truncated
+        // — the UI marks them with "*" so the user knows.
+        let projectsConnectorsPartial = false;
+        // Connector pagination is chunked at this many rows per call. First
+        // call fetches up to CONNECTORS_CHUNK; "Carregar mais" runs another
+        // call of CONNECTORS_CHUNK starting from the saved cursor. State
+        // accumulates across calls instead of being re-fetched.
+        const CONNECTORS_CHUNK = 20000;
+        // Cursor returned by the connector when stage 2 hits its cap. Saved
+        // here and passed back on "Carregar mais" so we resume from where
+        // we stopped instead of starting over.
+        let projectsConnectorsCursor = null;
+        // Running total of connector rows accumulated across all stage 2
+        // calls in the current period.
+        let projectsConnectorsRowsLoaded = 0;
+
+        // Initialize the projects tab's date pickers to the same defaults as
+        // the users tab. Done at first switch so we don't waste a fetch on
+        // load if the user never opens this tab.
+        function initProjectsTabIfNeeded() {
+            const fromInput = document.getElementById('proj-from-date');
+            const toInput = document.getElementById('proj-to-date');
+            if (fromInput.value && toInput.value) return;
+            const now = new Date();
+            const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            fromInput.value = past.toISOString().slice(0, 10);
+            toInput.value = now.toISOString().slice(0, 10);
+        }
+
+        function showTab(name) {
+            const userBtn = document.getElementById('tab-users');
+            const projBtn = document.getElementById('tab-projects');
+            const userContent = document.getElementById('users-tab-content');
+            const projContent = document.getElementById('projects-tab-content');
+
+            if (name === 'users') {
+                userBtn.classList.add('border-indigo-600', 'text-indigo-700');
+                userBtn.classList.remove('border-transparent', 'text-slate-500');
+                projBtn.classList.add('border-transparent', 'text-slate-500');
+                projBtn.classList.remove('border-indigo-600', 'text-indigo-700');
+                userContent.classList.remove('hidden');
+                projContent.classList.add('hidden');
+            } else {
+                projBtn.classList.add('border-indigo-600', 'text-indigo-700');
+                projBtn.classList.remove('border-transparent', 'text-slate-500');
+                userBtn.classList.add('border-transparent', 'text-slate-500');
+                userBtn.classList.remove('border-indigo-600', 'text-indigo-700');
+                projContent.classList.remove('hidden');
+                userContent.classList.add('hidden');
+
+                initProjectsTabIfNeeded();
+                if (!projectsLoaded) {
+                    refreshProjects(false);
+                }
+            }
+        }
+
+        function getProjectsWindow() {
+            const fromVal = document.getElementById('proj-from-date').value;
+            const toVal = document.getElementById('proj-to-date').value;
+            if (!fromVal || !toVal) return null;
+            return {
+                fromIso: `${fromVal}T00:00:00.000Z`,
+                toIso: `${toVal}T23:59:59.999Z`,
+                fromVal,
+                toVal,
+            };
+        }
+
+        // "Carregar mais" handler — fetches the NEXT chunk of connector
+        // logs starting from the saved cursor. Skips stage 1 (lite) entirely
+        // since email/AI-prompt counts are already complete. The merge is
+        // additive, so connector counts grow with each click instead of
+        // being recomputed from scratch.
+        async function loadMoreConnectors() {
+            if (isLoading) return;
+            if (!projectsConnectorsCursor) return; // nothing to continue from
+            const myRequestId = ++projectsRequestId;
+            isLoading = true;
+            projectsConnectorsLoading = true;
+            updateProjectStats();
+            filterProjects();
+            showToast(
+                `Buscando próximos ${CONNECTORS_CHUNK.toLocaleString('pt-BR')} registros...`,
+                'info',
+            );
+            try {
+                const win = getProjectsWindow();
+                if (!win) return;
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS);
+                });
+                const connectorResult = await Promise.race([
+                    get_project_connector_activity(
+                        win.fromIso,
+                        win.toIso,
+                        false,                          // no incremental for continuation
+                        CONNECTORS_CHUNK,               // fetch one more chunk
+                        projectsConnectorsCursor,       // resume from saved cursor
+                    ),
+                    timeoutPromise
+                ]);
+                if (myRequestId !== projectsRequestId) return; // user changed period
+
+                mergeConnectorActivity(connectorResult);
+                projectsConnectorsLoading = false;
+                projectsConnectorsFailed = false;
+                projectsConnectorsPartial = !!connectorResult.partial;
+                updateProjectStats();
+                filterProjects();
+                showToast(
+                    projectsConnectorsPartial
+                        ? `Mais ${connectorResult.total} registros adicionados — ainda há mais.`
+                        : `Mais ${connectorResult.total} registros adicionados — fim dos dados.`,
+                    'success',
+                );
+            } catch (error) {
+                if (myRequestId !== projectsRequestId) return;
+                projectsConnectorsLoading = false;
+                console.error('Carregar mais failed:', error);
+                showToast(`Erro: ${error.message}`, 'error');
+                updateProjectStats();
+                filterProjects();
+            } finally {
+                isLoading = false;
+            }
+        }
+
+        function changeProjectsPeriod() {
+            if (isLoading) return;
+            const win = getProjectsWindow();
+            if (!win) return;
+            if (diffDays(win.fromVal, win.toVal) > MAX_WINDOW_DAYS) {
+                showToast(`Janela máxima é de ${MAX_WINDOW_DAYS} dias.`, 'error');
+                return;
+            }
+            if (win.fromVal > win.toVal) {
+                showToast('Data inicial deve ser anterior à final.', 'error');
+                return;
+            }
+            refreshProjects(false);
+        }
+
+        async function refreshProjects(incremental) {
+            if (isLoading) return;
+            const myRequestId = ++projectsRequestId;
+            isLoading = true;
+            // Fresh entry — reset connector continuation state. The cursor
+            // and accumulated row count belong to a specific period; any
+            // change to the period throws them away.
+            projectsConnectorsCursor = null;
+            projectsConnectorsRowsLoaded = 0;
+            const tbody = document.getElementById('projects-table-body');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="px-6 py-8 text-center text-slate-500">
+                        <div class="flex items-center justify-center gap-2">
+                            <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Carregando emails e AI prompts...
+                        </div>
+                    </td>
+                </tr>
+            `;
+
+            const win = getProjectsWindow();
+            if (!win) {
+                showToast('Selecione uma data inicial e final.', 'error');
+                isLoading = false;
+                return;
+            }
+
+            // Stage 1: lite pass (emails + AI prompts). Fast.
+            try {
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS);
+                });
+                const liteResult = await Promise.race([
+                    get_project_activity_lite(win.fromIso, win.toIso, !!incremental),
+                    timeoutPromise
+                ]);
+                if (myRequestId !== projectsRequestId) return; // user changed period
+
+                projectsAllData = liteResult.projects || [];
+                projectsStats = liteResult.stats || {};
+                projectsLoaded = true;
+                projectsConnectorsLoading = true;
+                projectsConnectorsFailed = false;
+                projectsConnectorsPartial = false;
+                updateProjectStats();
+                filterProjects();
+                showToast('Projetos carregados. Buscando connectors em segundo plano...');
+            } catch (error) {
+                handleProjectsError(error, tbody);
+                isLoading = false;
+                return;
+            } finally {
+                isLoading = false;
+            }
+
+            // Stage 2: background fetch for connector activity. May take much
+            // longer than stage 1 — runs in parallel with the user interacting
+            // with the partially-rendered table.
+            try {
+                const connectorTimeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS);
+                });
+                const connectorResult = await Promise.race([
+                    get_project_connector_activity(
+                        win.fromIso,
+                        win.toIso,
+                        !!incremental,
+                        CONNECTORS_CHUNK,
+                        null,  // no cursor on fresh fetch
+                    ),
+                    connectorTimeoutPromise
+                ]);
+                if (myRequestId !== projectsRequestId) return; // user changed period
+
+                mergeConnectorActivity(connectorResult);
+                projectsConnectorsLoading = false;
+                projectsConnectorsFailed = false;
+                projectsConnectorsPartial = !!connectorResult.partial;
+                updateProjectStats();
+                filterProjects();
+                showToast(projectsConnectorsPartial
+                    ? 'Connectors carregados parcialmente — volume excedeu o tempo limite.'
+                    : 'Connectors carregados.',
+                    projectsConnectorsPartial ? 'info' : 'success');
+            } catch (error) {
+                if (myRequestId !== projectsRequestId) return;
+                projectsConnectorsLoading = false;
+                projectsConnectorsFailed = true;
+                projectsConnectorsPartial = false;
+                console.error('Background connector fetch failed:', error);
+                showToast(`Erro ao buscar connectors: ${error.message}`, 'error');
+                // Re-render so any "carregando..." cells flip to the failure
+                // marker (handled in renderProjects via projectsConnectorsFailed).
+                updateProjectStats();
+                filterProjects();
+            }
+        }
+
+        function handleProjectsError(error, tbody) {
+            console.error('Error fetching projects (lite):', error);
+            if (error.message === 'TIMEOUT') {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center">
+                            <div class="text-rose-500 font-medium mb-2">⏱️ Tempo limite excedido</div>
+                            <div class="text-slate-600 text-sm">Reduza a janela (por exemplo, 7 dias) e tente novamente.</div>
+                        </td>
+                    </tr>
+                `;
+                showToast('Tempo limite excedido. Reduza o período.', 'error');
+            } else if (error.message && error.message.includes('TIMEOUT_PAGINATION')) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center">
+                            <div class="text-rose-500 font-medium mb-2">⏱️ Timeout na busca</div>
+                            <div class="text-slate-600 text-sm">${escapeHtml(error.message.replace('TIMEOUT_PAGINATION:', '').trim())}</div>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center text-rose-500">
+                            ❌ Erro: ${escapeHtml(error.message)}
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Adds connector counts into projectsAllData by project_id (delta
+        // semantics — the response represents what THIS call fetched, and
+        // we add it to whatever's already accumulated). Runs after every
+        // stage 2 call: the first one (initialized state has 0 connector
+        // actions, +delta produces the first set of numbers) and every
+        // "Carregar mais" continuation (numbers grow).
+        function mergeConnectorActivity(connectorResult) {
+            const byProject = (connectorResult && connectorResult.by_project) || {};
+            const known = new Set(projectsAllData.map(p => p.project_id));
+            for (const [pid, entry] of Object.entries(byProject)) {
+                let row = projectsAllData.find(p => p.project_id === pid);
+                if (!row) {
+                    // Orphan project (not in get_organization). Add a
+                    // placeholder row so we don't silently drop counts.
+                    row = {
+                        project_id: pid,
+                        project_name: '(unknown)',
+                        folder_name: '(unknown)',
+                        connector_actions: 0,
+                        emails_sent: 0,
+                        ai_prompts: 0,
+                        total_activity: 0,
+                        last_activity: null,
+                    };
+                    projectsAllData.push(row);
+                    known.add(pid);
+                }
+                row.connector_actions += entry.count || 0;
+                row.total_activity = (row.connector_actions || 0)
+                    + (row.emails_sent || 0)
+                    + (row.ai_prompts || 0);
+                if (
+                    entry.last_activity &&
+                    (!row.last_activity || entry.last_activity > row.last_activity)
+                ) {
+                    row.last_activity = entry.last_activity;
+                }
+            }
+            // Stats: add the delta total to whatever was already loaded.
+            // total_connector_actions starts at 0 (from the lite stats), so
+            // the first merge initializes it correctly.
+            projectsStats.total_connector_actions =
+                (projectsStats.total_connector_actions || 0)
+                + (connectorResult.total || 0);
+            projectsStats.active_projects = projectsAllData
+                .filter(p => p.total_activity > 0).length;
+
+            // Continuation bookkeeping: save the cursor for the next
+            // "Carregar mais" click, and bump the running row count.
+            projectsConnectorsCursor = connectorResult.next_cursor || null;
+            projectsConnectorsRowsLoaded += connectorResult.total || 0;
+        }
+
+        function updateProjectStats() {
+            const baseTotal = projectsStats.total_projects || 0;
+            const baseActive = projectsStats.active_projects || 0;
+            const baseConnectors = projectsStats.total_connector_actions || 0;
+            const placeholder = projectsConnectorsLoading
+                ? '…'
+                : projectsConnectorsFailed
+                    ? 'erro'
+                    : null;
+            // Numbers stay real; we just append "*" when partial so the user
+            // knows it's truncated. Loading/failed states fully replace the
+            // number with a placeholder.
+            const suffix = projectsConnectorsPartial ? '*' : '';
+            document.getElementById('proj-stat-total').textContent = baseTotal;
+            document.getElementById('proj-stat-active').textContent =
+                placeholder ?? `${baseActive}${suffix}`;
+            document.getElementById('proj-stat-connectors').textContent =
+                placeholder ?? `${baseConnectors}${suffix}`;
+            document.getElementById('proj-stat-emails').textContent = projectsStats.total_emails_sent || 0;
+            document.getElementById('proj-stat-prompts').textContent = projectsStats.total_ai_prompts || 0;
+
+            // "Carregar mais" panel: only when we have partial data, a
+            // cursor to continue from, and we're not currently loading
+            // (otherwise the user could click and double-fire).
+            const loadMorePanel = document.getElementById('proj-load-more');
+            const loadMoreBtn = document.getElementById('proj-load-more-btn');
+            if (
+                projectsConnectorsPartial
+                && projectsConnectorsCursor
+                && !projectsConnectorsLoading
+            ) {
+                loadMorePanel.classList.remove('hidden');
+                const loaded = projectsConnectorsRowsLoaded.toLocaleString('pt-BR');
+                const chunk = CONNECTORS_CHUNK.toLocaleString('pt-BR');
+                document.getElementById('proj-load-more-info').textContent =
+                    `${loaded} ações carregadas até agora; clique para buscar mais ${chunk}`;
+                loadMoreBtn.textContent = `Carregar mais (+${chunk})`;
+                loadMoreBtn.disabled = false;
+                loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                loadMorePanel.classList.add('hidden');
+            }
+        }
+
+        function filterProjects() {
+            const searchTerm = document.getElementById('proj-search-input').value.toLowerCase();
+            const activityFilter = document.getElementById('proj-activity-filter').value;
+            projectsFilteredData = projectsAllData.filter(row => {
+                const matchesSearch = !searchTerm
+                    || (row.project_name && row.project_name.toLowerCase().includes(searchTerm))
+                    || (row.folder_name && row.folder_name.toLowerCase().includes(searchTerm))
+                    || (row.project_id && row.project_id.toLowerCase().includes(searchTerm));
+                const matchesActivity =
+                    activityFilter === 'all'
+                    || (activityFilter === 'active' && row.total_activity > 0)
+                    || (activityFilter === 'inactive' && row.total_activity === 0);
+                return matchesSearch && matchesActivity;
+            });
+            sortProjects();
+        }
+
+        function sortProjects() {
+            const sortBy = document.getElementById('proj-sort-by').value;
+            projectsFilteredData.sort((a, b) => {
+                switch (sortBy) {
+                    case 'total_desc':
+                        return (b.total_activity || 0) - (a.total_activity || 0);
+                    case 'last_activity_desc':
+                        if (!a.last_activity && !b.last_activity) return 0;
+                        if (!a.last_activity) return 1;
+                        if (!b.last_activity) return -1;
+                        return new Date(b.last_activity) - new Date(a.last_activity);
+                    case 'connectors_desc':
+                        return (b.connector_actions || 0) - (a.connector_actions || 0);
+                    case 'emails_desc':
+                        return (b.emails_sent || 0) - (a.emails_sent || 0);
+                    case 'prompts_desc':
+                        return (b.ai_prompts || 0) - (a.ai_prompts || 0);
+                    case 'name_asc':
+                        return (a.project_name || '').localeCompare(b.project_name || '');
+                    default:
+                        return 0;
+                }
+            });
+            renderProjects();
+        }
+
+        function renderProjects() {
+            const tbody = document.getElementById('projects-table-body');
+            if (projectsFilteredData.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center text-slate-500">
+                            Nenhum projeto encontrado.
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            // Connector cells have four states:
+            // - loading: stage 2 in flight, show "carregando…"
+            // - failed: stage 2 hit a non-recoverable error, show "erro"
+            // - partial: stage 2 timed out; we got some counts, show them
+            //   with "*" + tooltip so the user knows they're truncated
+            // - loaded: stage 2 done with all data, show the count
+            const loadingCell = `<span class="text-xs text-slate-400 italic">carregando…</span>`;
+            const failedCell = `<span class="text-xs text-rose-500 italic" title="Erro ao buscar connector_action_logs.">erro</span>`;
+            const partialTooltip = 'Dados parciais — o tempo limite foi atingido antes de buscar todas as ações de connectors. Reduza a janela para um período menor e tente novamente.';
+            tbody.innerHTML = projectsFilteredData.map(row => {
+                const lastActivityText = row.last_activity ? formatDateTime(row.last_activity) : '—';
+                const totalCell = projectsConnectorsLoading
+                    ? loadingCell
+                    : projectsConnectorsFailed
+                        ? `<span class="metric-badge metric-projects" title="Total parcial — connectors não carregados">${row.total_activity}*</span>`
+                        : projectsConnectorsPartial
+                            ? `<span class="metric-badge metric-projects" title="${partialTooltip}">${row.total_activity}*</span>`
+                            : (row.total_activity > 0
+                                ? `<span class="metric-badge metric-projects">${row.total_activity}</span>`
+                                : '—');
+                const connectorCell = projectsConnectorsLoading
+                    ? loadingCell
+                    : projectsConnectorsFailed
+                        ? failedCell
+                        : projectsConnectorsPartial
+                            ? `<span title="${partialTooltip}">${row.connector_actions || 0}*</span>`
+                            : `${row.connector_actions || 0}`;
+                return `
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-4 py-4">
+                            <div class="flex flex-col">
+                                <span class="text-sm font-medium text-slate-800 truncate-cell" style="max-width: 220px;" title="${escapeHtml(row.project_name || '')}">
+                                    ${escapeHtml(row.project_name || '(sem nome)')}
+                                </span>
+                                <code class="text-xs text-slate-500 mt-1" title="${escapeHtml(row.project_id || '')}">
+                                    ${escapeHtml(truncateString(row.project_id || '', 12))}
+                                </code>
+                            </div>
+                        </td>
+                        <td class="px-4 py-4 text-sm text-slate-700">${escapeHtml(row.folder_name || '—')}</td>
+                        <td class="px-4 py-4 text-center">${totalCell}</td>
+                        <td class="px-4 py-4 text-center text-sm text-slate-700">${connectorCell}</td>
+                        <td class="px-4 py-4 text-center text-sm text-slate-700">${row.emails_sent || 0}</td>
+                        <td class="px-4 py-4 text-center text-sm text-slate-700">${row.ai_prompts || 0}</td>
+                        <td class="px-4 py-4 text-sm text-slate-700">${lastActivityText}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function exportProjectsCSV() {
+            if (projectsFilteredData.length === 0) {
+                showToast('Nenhum dado para exportar', 'error');
+                return;
+            }
+            const headers = [
+                'Project ID', 'Nome', 'Pasta',
+                'Atividade total', 'Connector actions', 'Emails', 'AI prompts',
+                'Última atividade'
+            ];
+            const rows = projectsFilteredData.map(r => [
+                r.project_id || '',
+                r.project_name || '',
+                r.folder_name || '',
+                r.total_activity || 0,
+                r.connector_actions || 0,
+                r.emails_sent || 0,
+                r.ai_prompts || 0,
+                r.last_activity || '',
+            ]);
+            const csv = [
+                headers.join(','),
+                ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+            ].join('\n');
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `audit_projects_${new Date().toISOString().split('T')[0]}.csv`;
+            link.click();
             showToast('CSV exportado com sucesso!');
         }
     </script>
