@@ -201,7 +201,7 @@
         <!-- =============================== PROJECTS TAB =============================== -->
         <div id="projects-tab-content" class="hidden">
             <!-- Stats Cards -->
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
                 <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
                     <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Projetos</p>
                     <p class="text-2xl font-bold text-slate-800 mt-1" id="proj-stat-total">-</p>
@@ -221,6 +221,10 @@
                 <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
                     <p class="text-xs font-semibold text-violet-500 uppercase tracking-wide">AI prompts</p>
                     <p class="text-2xl font-bold text-violet-700 mt-1" id="proj-stat-prompts">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200" title="Ações de desenvolvimento: builds, tabelas, arquivos e mudanças de acesso. Sinal interno (não produção).">
+                    <p class="text-xs font-semibold text-amber-500 uppercase tracking-wide">Ações de dev</p>
+                    <p class="text-2xl font-bold text-amber-700 mt-1" id="proj-stat-dev">-</p>
                 </div>
             </div>
 
@@ -257,6 +261,7 @@
                             <option value="connectors_desc">Connector actions (maior)</option>
                             <option value="emails_desc">Emails (maior)</option>
                             <option value="prompts_desc">AI prompts (maior)</option>
+                            <option value="dev_desc">Atividade dev (maior)</option>
                             <option value="name_asc">Nome (A-Z)</option>
                         </select>
                     </div>
@@ -284,12 +289,13 @@
                                 <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide" title="Chamadas de connectors com source app/api">Connectors</th>
                                 <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Emails</th>
                                 <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">AI prompts</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide" title="Eventos do log de auditoria escopados ao projeto (builds, tabelas, arquivos, acessos). Hover na célula para ver o detalhamento.">Atividade dev</th>
                                 <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Última atividade</th>
                             </tr>
                         </thead>
                         <tbody id="projects-table-body" class="divide-y divide-slate-200">
                             <tr>
-                                <td colspan="7" class="px-6 py-8 text-center text-slate-500">
+                                <td colspan="8" class="px-6 py-8 text-center text-slate-500">
                                     Selecione um período para carregar os dados.
                                 </td>
                             </tr>
@@ -815,6 +821,17 @@
         // calls in the current period.
         let projectsConnectorsRowsLoaded = 0;
 
+        // Stage 3 (independent of stage 2) — project-scoped audit events
+        // rolled up into builds / table_ops / file_ops / access_changes /
+        // dev_actions per project. Runs in parallel with stage 2 and merges
+        // by project_id when it completes. No continuation cursor: the
+        // backend handles its own batching across project ids, so a single
+        // call returns the full per-project rollup (possibly `partial=true`
+        // if the global wall-time budget was hit).
+        let projectsDevLoading = false;
+        let projectsDevFailed = false;
+        let projectsDevPartial = false;
+
         // Initialize the projects tab's date pickers to the same defaults as
         // the users tab. Done at first switch so we don't waste a fetch on
         // load if the user never opens this tab.
@@ -954,7 +971,7 @@
             const tbody = document.getElementById('projects-table-body');
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="px-6 py-8 text-center text-slate-500">
+                    <td colspan="8" class="px-6 py-8 text-center text-slate-500">
                         <div class="flex items-center justify-center gap-2">
                             <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -990,9 +1007,18 @@
                 projectsConnectorsLoading = true;
                 projectsConnectorsFailed = false;
                 projectsConnectorsPartial = false;
+                projectsDevLoading = true;
+                projectsDevFailed = false;
+                projectsDevPartial = false;
                 updateProjectStats();
                 filterProjects();
-                showToast('Projetos carregados. Buscando connectors em segundo plano...');
+                showToast('Projetos carregados. Buscando connectors e dev em segundo plano...');
+
+                // Stage 3 fire-and-forget — runs in parallel with stage 2,
+                // merges in independently when it completes. We do NOT
+                // await it here; stage 2's await drives the function's
+                // overall completion.
+                fetchProjectsDevActivity(win, myRequestId);
             } catch (error) {
                 handleProjectsError(error, tbody);
                 isLoading = false;
@@ -1049,7 +1075,7 @@
             if (error.message === 'TIMEOUT') {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="px-6 py-8 text-center">
+                        <td colspan="8" class="px-6 py-8 text-center">
                             <div class="text-rose-500 font-medium mb-2">⏱️ Tempo limite excedido</div>
                             <div class="text-slate-600 text-sm">Reduza a janela (por exemplo, 7 dias) e tente novamente.</div>
                         </td>
@@ -1059,7 +1085,7 @@
             } else if (error.message && error.message.includes('TIMEOUT_PAGINATION')) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="px-6 py-8 text-center">
+                        <td colspan="8" class="px-6 py-8 text-center">
                             <div class="text-rose-500 font-medium mb-2">⏱️ Timeout na busca</div>
                             <div class="text-slate-600 text-sm">${escapeHtml(error.message.replace('TIMEOUT_PAGINATION:', '').trim())}</div>
                         </td>
@@ -1068,7 +1094,7 @@
             } else {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="px-6 py-8 text-center text-rose-500">
+                        <td colspan="8" class="px-6 py-8 text-center text-rose-500">
                             ❌ Erro: ${escapeHtml(error.message)}
                         </td>
                     </tr>
@@ -1129,6 +1155,79 @@
             projectsConnectorsRowsLoaded += connectorResult.total || 0;
         }
 
+        // Stage 3 — dispatched in parallel with stage 2 from refreshProjects.
+        // Idempotent against stale period changes via requestId.
+        async function fetchProjectsDevActivity(win, requestId) {
+            try {
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('TIMEOUT')), REQUEST_TIMEOUT_MS);
+                });
+                const devResult = await Promise.race([
+                    get_project_dev_activity(win.fromIso, win.toIso),
+                    timeoutPromise
+                ]);
+                if (requestId !== projectsRequestId) return;
+
+                mergeDevActivity(devResult);
+                projectsDevLoading = false;
+                projectsDevFailed = false;
+                projectsDevPartial = !!devResult.partial;
+                updateProjectStats();
+                filterProjects();
+            } catch (error) {
+                if (requestId !== projectsRequestId) return;
+                projectsDevLoading = false;
+                projectsDevFailed = true;
+                projectsDevPartial = false;
+                console.error('Background dev-activity fetch failed:', error);
+                showToast(`Erro ao buscar atividade dev: ${error.message}`, 'error');
+                updateProjectStats();
+                filterProjects();
+            }
+        }
+
+        // Merges per-project dev-activity counts onto the existing rows.
+        // Adds orphan rows for projects only seen in the dev stream (e.g.
+        // recently created and not yet in the cached `get_organization`
+        // snapshot). `total_activity` is deliberately NOT extended — it
+        // represents the production proxy (connectors+emails+AI), and dev
+        // actions are an internal-work signal, not production traffic.
+        // `last_activity` IS extended, since it tracks the latest event of
+        // ANY kind on the project.
+        function mergeDevActivity(devResult) {
+            const byProject = (devResult && devResult.by_project) || {};
+            for (const [pid, entry] of Object.entries(byProject)) {
+                let row = projectsAllData.find(p => p.project_id === pid);
+                if (!row) {
+                    row = {
+                        project_id: pid,
+                        project_name: '(unknown)',
+                        folder_name: '(unknown)',
+                        connector_actions: 0,
+                        emails_sent: 0,
+                        ai_prompts: 0,
+                        total_activity: 0,
+                        last_activity: null,
+                    };
+                    projectsAllData.push(row);
+                }
+                row.dev_actions = entry.dev_actions || 0;
+                row.builds = entry.builds || 0;
+                row.table_ops = entry.table_ops || 0;
+                row.file_ops = entry.file_ops || 0;
+                row.access_changes = entry.access_changes || 0;
+                row.last_dev_activity = entry.last_dev_activity || null;
+                if (
+                    row.last_dev_activity &&
+                    (!row.last_activity || row.last_dev_activity > row.last_activity)
+                ) {
+                    row.last_activity = row.last_dev_activity;
+                }
+            }
+            projectsStats.total_dev_actions = Object.values(byProject)
+                .reduce((acc, e) => acc + (e.dev_actions || 0), 0);
+        }
+
         function updateProjectStats() {
             const baseTotal = projectsStats.total_projects || 0;
             const baseActive = projectsStats.active_projects || 0;
@@ -1149,6 +1248,14 @@
                 placeholder ?? `${baseConnectors}${suffix}`;
             document.getElementById('proj-stat-emails').textContent = projectsStats.total_emails_sent || 0;
             document.getElementById('proj-stat-prompts').textContent = projectsStats.total_ai_prompts || 0;
+            const devPlaceholder = projectsDevLoading
+                ? '…'
+                : projectsDevFailed
+                    ? 'erro'
+                    : null;
+            const devSuffix = projectsDevPartial ? '*' : '';
+            document.getElementById('proj-stat-dev').textContent =
+                devPlaceholder ?? `${projectsStats.total_dev_actions || 0}${devSuffix}`;
 
             // "Carregar mais" panel: only when we have partial data, a
             // cursor to continue from, and we're not currently loading
@@ -1207,6 +1314,8 @@
                         return (b.emails_sent || 0) - (a.emails_sent || 0);
                     case 'prompts_desc':
                         return (b.ai_prompts || 0) - (a.ai_prompts || 0);
+                    case 'dev_desc':
+                        return (b.dev_actions || 0) - (a.dev_actions || 0);
                     case 'name_asc':
                         return (a.project_name || '').localeCompare(b.project_name || '');
                     default:
@@ -1221,7 +1330,7 @@
             if (projectsFilteredData.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="px-6 py-8 text-center text-slate-500">
+                        <td colspan="8" class="px-6 py-8 text-center text-slate-500">
                             Nenhum projeto encontrado.
                         </td>
                     </tr>
@@ -1237,6 +1346,8 @@
             const loadingCell = `<span class="text-xs text-slate-400 italic">carregando…</span>`;
             const failedCell = `<span class="text-xs text-rose-500 italic" title="Erro ao buscar connector_action_logs.">erro</span>`;
             const partialTooltip = 'Dados parciais — o tempo limite foi atingido antes de buscar todas as ações de connectors. Reduza a janela para um período menor e tente novamente.';
+            const devFailedCell = `<span class="text-xs text-rose-500 italic" title="Erro ao buscar get_project_action_logs.">erro</span>`;
+            const devPartialTooltip = 'Dados parciais — o tempo limite global foi atingido antes de processar todos os lotes de projetos. Reduza a janela ou aguarde uma nova consulta.';
             tbody.innerHTML = projectsFilteredData.map(row => {
                 const lastActivityText = row.last_activity ? formatDateTime(row.last_activity) : '—';
                 const totalCell = projectsConnectorsLoading
@@ -1255,6 +1366,18 @@
                         : projectsConnectorsPartial
                             ? `<span title="${partialTooltip}">${row.connector_actions || 0}*</span>`
                             : `${row.connector_actions || 0}`;
+                const devBreakdown =
+                    `Builds: ${row.builds || 0} | Tabelas: ${row.table_ops || 0} | Arquivos: ${row.file_ops || 0} | Acessos: ${row.access_changes || 0}`;
+                const devCount = row.dev_actions || 0;
+                const devCell = projectsDevLoading
+                    ? loadingCell
+                    : projectsDevFailed
+                        ? devFailedCell
+                        : projectsDevPartial
+                            ? `<span title="${devPartialTooltip} (${devBreakdown})">${devCount}*</span>`
+                            : (devCount > 0
+                                ? `<span title="${devBreakdown}">${devCount}</span>`
+                                : '—');
                 return `
                     <tr class="hover:bg-slate-50">
                         <td class="px-4 py-4">
@@ -1272,6 +1395,7 @@
                         <td class="px-4 py-4 text-center text-sm text-slate-700">${connectorCell}</td>
                         <td class="px-4 py-4 text-center text-sm text-slate-700">${row.emails_sent || 0}</td>
                         <td class="px-4 py-4 text-center text-sm text-slate-700">${row.ai_prompts || 0}</td>
+                        <td class="px-4 py-4 text-center text-sm text-slate-700">${devCell}</td>
                         <td class="px-4 py-4 text-sm text-slate-700">${lastActivityText}</td>
                     </tr>
                 `;
@@ -1286,7 +1410,8 @@
             const headers = [
                 'Project ID', 'Nome', 'Pasta',
                 'Atividade total', 'Connector actions', 'Emails', 'AI prompts',
-                'Última atividade'
+                'Atividade dev (total)', 'Builds', 'Operações tabelas', 'Operações arquivos', 'Mudanças de acesso',
+                'Última atividade dev', 'Última atividade'
             ];
             const rows = projectsFilteredData.map(r => [
                 r.project_id || '',
@@ -1296,6 +1421,12 @@
                 r.connector_actions || 0,
                 r.emails_sent || 0,
                 r.ai_prompts || 0,
+                r.dev_actions || 0,
+                r.builds || 0,
+                r.table_ops || 0,
+                r.file_ops || 0,
+                r.access_changes || 0,
+                r.last_dev_activity || '',
                 r.last_activity || '',
             ]);
             const csv = [

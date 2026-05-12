@@ -31,7 +31,7 @@ MAX_WINDOW_DAYS = 31  # mirrors the server-side cap
 # `members` and `organization` are singletons because they're not window-scoped.
 _cache = {
     "auth_logs": [],
-    "action_logs": [],
+    "org_action_logs": [],
     "connector_action_logs": [],
     "email_notifications": [],
     "ai_prompts": [],
@@ -143,7 +143,7 @@ class PaginationTimeoutError(Exception):
 
 _LOG_TYPE_BY_ACTION = {
     "get_auth_attempt_logs": "auth_logs",
-    "get_action_logs": "action_logs",
+    "get_organization_action_logs": "org_action_logs",
     "get_connector_action_logs": "connector_action_logs",
     "get_email_notification_logs": "email_notifications",
     "get_ai_prompt_logs": "ai_prompts",
@@ -151,7 +151,7 @@ _LOG_TYPE_BY_ACTION = {
 
 
 def _log_type_for_action(action_name: str) -> str:
-    return _LOG_TYPE_BY_ACTION.get(action_name, "action_logs")
+    return _LOG_TYPE_BY_ACTION.get(action_name, "org_action_logs")
 
 
 def _paginate(
@@ -413,7 +413,7 @@ def get_detailed_user_activity(
         print(f"  Members: {len(members_by_email)}")
 
         auth_logs = fetcher("get_auth_attempt_logs", from_iso, to_iso)
-        action_logs = fetcher("get_action_logs", from_iso, to_iso)
+        action_logs = fetcher("get_organization_action_logs", from_iso, to_iso)
 
         # Auth logs are keyed by email and have a status field.
         auth_by_email: dict = {}
@@ -863,6 +863,166 @@ def _build_project_record(pid: str, meta: dict, bucket: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Per-project developer activity (project-scoped audit log)
+# ---------------------------------------------------------------------------
+
+# Event categories for the dev-activity rollup. Lowercased to match the
+# normalization the per-author code already uses (`event.lower()` at the
+# accumulator). Reads (describeTable/listTables/getRows/listUsers/...) are
+# deliberately excluded — these are mutations only, since this is an
+# "activity" signal, not an audit-trail surface.
+_BUILD_EVENTS = {"createbuild"}
+_TABLE_OP_EVENTS = {
+    "createtable",
+    "updatetable",
+    "deletetable",
+    "createrow",
+    "updaterow",
+    "deleterow",
+    "executequery",
+}
+_FILE_OP_EVENTS = {"movefile", "uploadfile", "createfolder"}
+_ACCESS_CHANGE_EVENTS = {
+    "adduser",
+    "removeuser",
+    "addrole",
+    "removerole",
+    "updaterole",
+}
+
+# get_project_action_logs caps projectIds at 100 (Postgres index degrades past
+# ~150). Larger orgs are split into multiple sequential batches.
+_PROJECT_ACTIONS_BATCH_SIZE = 100
+
+
+def _empty_dev_bucket() -> dict:
+    return {
+        "dev_actions": 0,
+        "builds": 0,
+        "table_ops": 0,
+        "file_ops": 0,
+        "access_changes": 0,
+        "last_dev_activity": None,
+    }
+
+
+def _accumulate_dev_event(by_project: dict, log: dict) -> None:
+    pid = log.get("projectId")
+    if not pid:
+        return
+    event = (log.get("event") or "").lower()
+    bucket = by_project.setdefault(pid, _empty_dev_bucket())
+    bucket["dev_actions"] += 1
+    if event in _BUILD_EVENTS:
+        bucket["builds"] += 1
+    elif event in _TABLE_OP_EVENTS:
+        bucket["table_ops"] += 1
+    elif event in _FILE_OP_EVENTS:
+        bucket["file_ops"] += 1
+    elif event in _ACCESS_CHANGE_EVENTS:
+        bucket["access_changes"] += 1
+    created_at = log.get("createdAt")
+    if created_at and (
+        not bucket["last_dev_activity"] or created_at > bucket["last_dev_activity"]
+    ):
+        bucket["last_dev_activity"] = created_at
+
+
+@register_function
+def get_project_dev_activity(from_iso: str = "", to_iso: str = ""):
+    """Per-project developer-activity rollup from the project-scoped audit log
+    (get_project_action_logs).
+
+    For each project in the organization, aggregates events within the window:
+      dev_actions:       total project-scoped audit events
+      builds:            count of createBuild
+      table_ops:         table mutations (create/update/delete table or row, executeQuery)
+      file_ops:          moveFile / uploadFile / createFolder
+      access_changes:    addUser / removeUser / addRole / removeRole / updateRole
+      last_dev_activity: latest createdAt seen for the project
+
+    Project ids are chunked into batches of _PROJECT_ACTIONS_BATCH_SIZE (the
+    connector hard cap) and paginated sequentially. A global wall-time budget
+    of PAGINATION_TIMEOUT_SECONDS applies across all batches — when exceeded,
+    later batches are skipped and `partial=true` is returned with whatever
+    completed batches accumulated. No caching for now (cache key would need a
+    projectIds dimension); fresh paginate on every call.
+
+    Returns the same envelope as get_project_connector_activity so the
+    frontend can merge results by project_id.
+    """
+    if not from_iso or not to_iso:
+        from_iso, to_iso = _default_window(days=30)
+
+    try:
+        _validate_window(from_iso, to_iso)
+    except ValueError as e:
+        raise Exception(f"INVALID_WINDOW: {e}")
+
+    print(f"=== Project dev activity for {from_iso} -> {to_iso} ===")
+
+    try:
+        projects_meta = _resolve_project_metadata(force_refresh=False)
+        project_ids = list(projects_meta.keys())
+        print(f"  Projects: {len(project_ids)}")
+
+        by_project: dict = {}
+        total = 0
+        partial = False
+        start_time = time.time()
+
+        for i in range(0, len(project_ids), _PROJECT_ACTIONS_BATCH_SIZE):
+            elapsed = time.time() - start_time
+            if elapsed > PAGINATION_TIMEOUT_SECONDS:
+                print(
+                    f"  GLOBAL TIMEOUT at batch {i // _PROJECT_ACTIONS_BATCH_SIZE} "
+                    f"after {elapsed:.1f}s — remaining batches skipped"
+                )
+                partial = True
+                break
+
+            batch = project_ids[i : i + _PROJECT_ACTIONS_BATCH_SIZE]
+            try:
+                logs = _paginate(
+                    "get_project_action_logs",
+                    from_iso,
+                    to_iso,
+                    {"projectIds": batch},
+                )
+            except PaginationTimeoutError as e:
+                logs = e.partial_logs
+                partial = True
+
+            for log in logs:
+                _accumulate_dev_event(by_project, log)
+                total += 1
+
+            if partial:
+                # A batch timeout means later batches would also likely be slow
+                # and we're already over budget for one of them — stop here.
+                break
+
+        print(
+            f"  {total} dev actions across {len(by_project)} projects "
+            f"(partial={partial})"
+        )
+        return {
+            "by_project": by_project,
+            "total": total,
+            "partial": partial,
+            "window": {"from": from_iso, "to": to_iso},
+        }
+
+    except Exception as e:
+        if str(e).startswith("INVALID_WINDOW:"):
+            raise
+        import traceback
+
+        traceback.print_exc()
+        raise Exception(f"Erro na consulta: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Diagnostic helpers (kept from the original; useful for debugging)
 # ---------------------------------------------------------------------------
 
@@ -879,7 +1039,7 @@ def discover_tables():
         )
         action_result = run_connection_action(
             CONNECTION_NAME,
-            "get_action_logs",
+            "get_organization_action_logs",
             {"from": from_iso, "to": to_iso, "limit": 10},
         )
         auth_logs = auth_result.get("entries", []) or []
